@@ -105,6 +105,9 @@ int main(int ac, char *av[])
 		      {
 			if (rc < 0)
 			  {
+			    if (errno == EIO)
+			      exit (0);
+
 			    fprintf(stderr, "Error %d on read master PTY\n", errno);
 			    exit(1);
 			  }
