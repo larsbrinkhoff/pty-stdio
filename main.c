@@ -1,3 +1,10 @@
+/*
+ * Start a program in a pseudo terminal, and redirect its input from
+ * stdin, and output to stdout.
+ *
+ * Originally by Rachid Koucha.  Enhanced by Lars Brinhoff.
+ */
+
 #define _XOPEN_SOURCE 600
 #include <stdlib.h>
 #include <fcntl.h>
