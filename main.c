@@ -155,19 +155,7 @@ int main(int ac, char *av[])
       ioctl(0, TIOCSCTTY, 1);
 
       // Execution of the program
-      {
-	char **child_av;
-	int i;
-
-	// Build the command line
-	child_av = (char **)malloc(ac * sizeof(char *));
-	for (i = 1; i < ac; i ++)
-	  {
-	    child_av[i - 1] = strdup(av[i]);
-	  }
-	child_av[i - 1] = NULL;
-	rc = execvp(child_av[0], child_av);
-      }
+      rc = execvp(av[1], av + 1);
 
       // if Error...
       return 1;
