@@ -9,41 +9,139 @@
 #include <sys/select.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <stdarg.h>
 
+
+static void fatal (const char *message, ...)
+{
+  va_list args;
+
+  va_start(args, message);
+  vfprintf(stderr, message, args);
+  fputc('\n', stderr);
+  va_end(args);
+
+  exit(1);
+}
+
+static int open_master (void)
+{
+  int rc, fdm;
+
+  fdm = posix_openpt(O_RDWR);
+  if (fdm < 0)
+    fatal("Error %d on posix_openpt()", errno);
+
+  rc = grantpt(fdm);
+  if (rc != 0)
+    fatal("Error %d on grantpt()", errno);
+
+  rc = unlockpt(fdm);
+  if (rc != 0)
+    fatal("Error %d on unlockpt()", errno);
+
+  return fdm;
+}
+
+static void read_write (const char *name, int in, int out)
+{
+  char input[150];
+  int rc;
+
+  rc = read(in, input, sizeof input);
+  if (rc < 0)
+    {
+      if (errno == EIO)
+	exit (0);
+
+      fatal("Error %d on read %s", errno, name);
+    }
+
+  write(out, input, rc);
+}
+
+static void master (int fdm)
+{
+  fd_set fd_in;
+
+  for (;;)
+    {
+      // Wait for data from standard input and master side of PTY
+      FD_ZERO(&fd_in);
+      FD_SET(0, &fd_in);
+      FD_SET(fdm, &fd_in);
+
+      if (select(fdm + 1, &fd_in, NULL, NULL, NULL) == -1)
+	fatal("Error %d on select()", errno);
+
+      // If data on standard input
+      if (FD_ISSET(0, &fd_in))
+	read_write("standard input", 0, fdm);
+
+      // If data on master side of PTY
+      if (FD_ISSET(fdm, &fd_in))
+	read_write("master pty", fdm, 1);
+    }
+}
+
+static void slave (int fds, char **av)
+{
+  struct termios slave_orig_term_settings; // Saved terminal settings
+  struct termios new_term_settings; // Current terminal settings
+  int rc;
+
+  // Save the defaults parameters of the slave side of the PTY
+  rc = tcgetattr(fds, &slave_orig_term_settings);
+
+  // Set RAW mode on slave side of PTY
+  new_term_settings = slave_orig_term_settings;
+  cfmakeraw (&new_term_settings);
+  tcsetattr (fds, TCSANOW, &new_term_settings);
+
+  // The slave side of the PTY becomes the standard input and outputs
+  // of the child process
+  close(0); // Close standard input (current terminal)
+  close(1); // Close standard output (current terminal)
+  close(2); // Close standard error (current terminal)
+
+  // PTY becomes standard input (0)
+  if (dup(fds) == -1)
+    fatal("Error %d on dup()", errno);
+
+  // PTY becomes standard output (1)
+  if (dup(fds) == -1)
+    fatal("Error %d on dup()", errno);
+
+  // PTY becomes standard error (2)
+  if (dup(fds) == -1)
+    fatal("Error %d on dup()", errno);
+
+  // Now the original file descriptor is useless
+  close(fds);
+
+  // Make the current process a new session leader
+  setsid();
+
+  // As the child is a session leader, set the controlling terminal to
+  // be the slave side of the PTY (Mandatory for programs like the
+  // shell to make them correctly manage their outputs)
+  ioctl(0, TIOCSCTTY, 1);
+
+  // Execution of the program
+  rc = execvp(av[1], av + 1);
+
+  perror("exec");
+}
 
 int main(int ac, char *av[])
 {
   int fdm, fds;
-  int rc;
-  char input[150];
 
   // Check arguments
   if (ac <= 1)
-    {
-      fprintf(stderr, "Usage: %s program_name [parameters]\n", av[0]);
-      exit(1);
-    }
+    fatal("Usage: %s program_name [parameters]", av[0]);
 
-  fdm = posix_openpt(O_RDWR);
-  if (fdm < 0)
-    {
-      fprintf(stderr, "Error %d on posix_openpt()\n", errno);
-      return 1;
-    }
-
-  rc = grantpt(fdm);
-  if (rc != 0)
-    {
-      fprintf(stderr, "Error %d on grantpt()\n", errno);
-      return 1;
-    }
-
-  rc = unlockpt(fdm);
-  if (rc != 0)
-    {
-      fprintf(stderr, "Error %d on unlockpt()\n", errno);
-      return 1;
-    }
+  fdm = open_master();
 
   // Open the slave side ot the PTY
   fds = open(ptsname(fdm), O_RDWR);
@@ -51,114 +149,15 @@ int main(int ac, char *av[])
   // Create the child process
   if (fork())
     {
-      fd_set fd_in;
-
-      // FATHER
-
       // Close the slave side of the PTY
       close(fds);
-
-      while (1)
-	{
-	  // Wait for data from standard input and master side of PTY
-	  FD_ZERO(&fd_in);
-	  FD_SET(0, &fd_in);
-	  FD_SET(fdm, &fd_in);
-
-	  rc = select(fdm + 1, &fd_in, NULL, NULL, NULL);
-	  switch(rc)
-	    {
-	    case -1 : fprintf(stderr, "Error %d on select()\n", errno);
-	      exit(1);
-
-	    default :
-	      {
-		// If data on standard input
-		if (FD_ISSET(0, &fd_in))
-		  {
-		    rc = read(0, input, sizeof(input));
-		    if (rc > 0)
-		      {
-			// Send data on the master side of PTY
-			write(fdm, input, rc);
-		      }
-		    else
-		      {
-			if (rc < 0)
-			  {
-			    fprintf(stderr, "Error %d on read standard input\n", errno);
-			    exit(1);
-			  }
-		      }
-		  }
-
-		// If data on master side of PTY
-		if (FD_ISSET(fdm, &fd_in))
-		  {
-		    rc = read(fdm, input, sizeof(input));
-		    if (rc > 0)
-		      {
-			// Send data on standard output
-			write(1, input, rc);
-		      }
-		    else
-		      {
-			if (rc < 0)
-			  {
-			    if (errno == EIO)
-			      exit (0);
-
-			    fprintf(stderr, "Error %d on read master PTY\n", errno);
-			    exit(1);
-			  }
-		      }
-		  }
-	      }
-	    } // End switch
-	} // End while
+      master(fdm);
     }
   else
     {
-      struct termios slave_orig_term_settings; // Saved terminal settings
-      struct termios new_term_settings; // Current terminal settings
-
-      // CHILD
-
       // Close the master side of the PTY
       close(fdm);
-
-      // Save the defaults parameters of the slave side of the PTY
-      rc = tcgetattr(fds, &slave_orig_term_settings);
-
-      // Set RAW mode on slave side of PTY
-      new_term_settings = slave_orig_term_settings;
-      cfmakeraw (&new_term_settings);
-      tcsetattr (fds, TCSANOW, &new_term_settings);
-
-      // The slave side of the PTY becomes the standard input and outputs of the child process
-      close(0); // Close standard input (current terminal)
-      close(1); // Close standard output (current terminal)
-      close(2); // Close standard error (current terminal)
-
-      dup(fds); // PTY becomes standard input (0)
-      dup(fds); // PTY becomes standard output (1)
-      dup(fds); // PTY becomes standard error (2)
-
-      // Now the original file descriptor is useless
-      close(fds);
-
-      // Make the current process a new session leader
-      setsid();
-
-      // As the child is a session leader, set the controlling terminal to be the slave side of the PTY
-      // (Mandatory for programs like the shell to make them manage correctly their outputs)
-      ioctl(0, TIOCSCTTY, 1);
-
-      // Execution of the program
-      rc = execvp(av[1], av + 1);
-
-      // if Error...
-      return 1;
+      slave(fds, av);
     }
 
   return 0;

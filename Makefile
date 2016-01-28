@@ -1,7 +1,9 @@
+CFLAGS = -O -Wall
+
 all: pty-stdio
 
 pty-stdio: main.o
-	gcc -o $@ $^
+	$(CC) -o $@ $^
 
 clean:
 	rm -f pty-stdio *.o
