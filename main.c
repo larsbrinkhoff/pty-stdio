@@ -69,7 +69,18 @@ static void read_write (const char *name, int in, int out)
 
 static void master (int fdm)
 {
+  struct termios old_tios;
+  struct termios new_tios;
   fd_set fd_in;
+  int rc;
+
+  // Save the defaults parameters of stdin
+  rc = tcgetattr(0, &old_tios);
+
+  // Set RAW mode on stdin
+  new_tios = old_tios;
+  cfmakeraw (&new_term_settings);
+  tcsetattr (0, TCSANOW, &new_term_settings);
 
   for (;;)
     {
@@ -93,17 +104,7 @@ static void master (int fdm)
 
 static void slave (int fds, char **av)
 {
-  struct termios slave_orig_term_settings; // Saved terminal settings
-  struct termios new_term_settings; // Current terminal settings
   int rc;
-
-  // Save the defaults parameters of the slave side of the PTY
-  rc = tcgetattr(fds, &slave_orig_term_settings);
-
-  // Set RAW mode on slave side of PTY
-  new_term_settings = slave_orig_term_settings;
-  cfmakeraw (&new_term_settings);
-  tcsetattr (fds, TCSANOW, &new_term_settings);
 
   // The slave side of the PTY becomes the standard input and outputs
   // of the child process
