@@ -17,7 +17,20 @@
 #include <sys/ioctl.h>
 #include <string.h>
 #include <stdarg.h>
+#include <signal.h>
 
+
+static struct termios old_termios;
+
+static void cleanup (void)
+{
+  tcsetattr (0, TCSANOW, &old_termios);
+}
+
+static void handler (int sig)
+{
+  exit(0);
+}
 
 static void fatal (const char *message, ...)
 {
@@ -69,18 +82,22 @@ static void read_write (const char *name, int in, int out)
 
 static void master (int fdm)
 {
-  struct termios old_tios;
-  struct termios new_tios;
+  struct termios new_termios;
   fd_set fd_in;
   int rc;
 
   // Save the defaults parameters of stdin
-  rc = tcgetattr(0, &old_tios);
+  rc = tcgetattr(0, &old_termios);
+
+  // Restore terminal on exit
+  atexit(cleanup);
+  siginterrupt (SIGINT, 1);
+  signal (SIGINT, handler);
 
   // Set RAW mode on stdin
-  new_tios = old_tios;
-  cfmakeraw (&new_term_settings);
-  tcsetattr (0, TCSANOW, &new_term_settings);
+  new_termios = old_termios;
+  cfmakeraw (&new_termios);
+  tcsetattr (0, TCSANOW, &new_termios);
 
   for (;;)
     {
