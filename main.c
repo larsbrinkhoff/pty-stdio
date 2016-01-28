@@ -21,10 +21,11 @@
 
 
 static struct termios old_termios;
+static int fd_termios;
 
 static void cleanup (void)
 {
-  tcsetattr (0, TCSANOW, &old_termios);
+  tcsetattr (fd_termios, TCSANOW, &old_termios);
 }
 
 static void handler (int sig)
@@ -80,24 +81,43 @@ static void read_write (const char *name, int in, int out)
   write(out, input, rc);
 }
 
-static void master (int fdm)
+static void terminal_settings(int fdm)
 {
   struct termios new_termios;
-  fd_set fd_in;
+  struct winsize ws;
   int rc;
 
-  // Save the defaults parameters of stdin
-  rc = tcgetattr(0, &old_termios);
+  if (isatty(0))
+    fd_termios = 0;
+  else if (isatty(1))
+    fd_termios = 1;
+  else
+    return;
+
+  // Copy terminal size to the pty.
+  ioctl(fd_termios, TIOCGWINSZ, &ws);
+  ioctl(fdm, TIOCSWINSZ, &ws);
+
+  // Save the defaults parameters
+  rc = tcgetattr(fd_termios, &old_termios);
 
   // Restore terminal on exit
   atexit(cleanup);
   siginterrupt (SIGINT, 1);
   signal (SIGINT, handler);
 
-  // Set RAW mode on stdin
-  new_termios = old_termios;
-  cfmakeraw (&new_termios);
-  tcsetattr (0, TCSANOW, &new_termios);
+  if (fd_termios == 0)
+    {
+      // Set RAW mode on stdin
+      new_termios = old_termios;
+      cfmakeraw (&new_termios);
+      tcsetattr (0, TCSANOW, &new_termios);
+    }
+}
+
+static void master (int fdm)
+{
+  fd_set fd_in;
 
   for (;;)
     {
@@ -167,6 +187,8 @@ int main(int ac, char *av[])
     fatal("Usage: %s program_name [parameters]", av[0]);
 
   fdm = open_master();
+
+  terminal_settings(fdm);
 
   // Open the slave side ot the PTY
   fds = open(ptsname(fdm), O_RDWR);
