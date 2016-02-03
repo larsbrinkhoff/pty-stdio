@@ -100,6 +100,8 @@ static void terminal_settings(int fdm)
 
   // Save the defaults parameters
   rc = tcgetattr(fd_termios, &old_termios);
+  if (rc == -1)
+    fatal("Error %d on tcgetattr()", errno);
 
   // Restore terminal on exit
   atexit(cleanup);
@@ -174,8 +176,9 @@ static void slave (int fds, char **av)
 
   // Execution of the program
   rc = execvp(av[1], av + 1);
+  if (rc == -1)
+    fatal("Error %d on execvp()", errno);
 
-  perror("exec");
 }
 
 int main(int ac, char *av[])
