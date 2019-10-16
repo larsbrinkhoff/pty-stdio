@@ -6,6 +6,7 @@
  */
 
 #define _XOPEN_SOURCE 600
+#define _BSD_SOURCE
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
